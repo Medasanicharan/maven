@@ -1,3 +1,6 @@
 [submodule "standalone-app"]
 	path = standalone-app
 	url = https://github.com/Medasanicharan/standalone-app.git
+[submodule "maven-webapplication-project"]
+	path = maven-webapplication-project
+	url = https://github.com/Medasanicharan/maven-webapplication-project.git
