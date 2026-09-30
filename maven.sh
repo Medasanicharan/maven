@@ -271,13 +271,7 @@ EOF
 
 VALIDATE $? "Configuring Maven environment variables"
 
-# ------------------------------------------------------------
-# Load Maven environment variables in the current shell
-# ------------------------------------------------------------
 
-source "$PROFILE_FILE"
-
-VALIDATE $? "Loading Maven environment variables"
 
 # # ------------------------------------------------------------
 # # Configure Environment Variables
