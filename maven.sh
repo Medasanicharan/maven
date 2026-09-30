@@ -260,19 +260,44 @@ VALIDATE $? "Creating Maven symbolic link"
 
 PROFILE_FILE="/etc/profile.d/maven.sh"
 
-
 cat > "$PROFILE_FILE" <<EOF
 
 # Apache Maven
-
 export M2_HOME="$MAVEN_SYMLINK"
 export MAVEN_HOME="$MAVEN_SYMLINK"
-export PATH="\$M2_HOME/bin:\$PATH"
+export PATH="\$MAVEN_HOME/bin:\$PATH"
 
 EOF
 
-
 VALIDATE $? "Configuring Maven environment variables"
+
+# ------------------------------------------------------------
+# Load Maven environment variables in the current shell
+# ------------------------------------------------------------
+
+source "$PROFILE_FILE"
+
+VALIDATE $? "Loading Maven environment variables"
+
+# # ------------------------------------------------------------
+# # Configure Environment Variables
+# # ------------------------------------------------------------
+
+# PROFILE_FILE="/etc/profile.d/maven.sh"
+
+
+# cat > "$PROFILE_FILE" <<EOF
+
+# # Apache Maven
+
+# export M2_HOME="$MAVEN_SYMLINK"
+# export MAVEN_HOME="$MAVEN_SYMLINK"
+# export PATH="\$M2_HOME/bin:\$PATH"
+
+# EOF
+
+
+# VALIDATE $? "Configuring Maven environment variables"
 
 
 # ------------------------------------------------------------
