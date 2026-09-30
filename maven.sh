@@ -93,9 +93,10 @@ echo
 # Update Packages
 # ------------------------------------------------------------
 
-dnf update -y &>> "$LOGFILE"
+echo -e "\nUpdating system packages..."
 
-VALIDATE $? "Updating system packages"
+dnf update -y --allowerasing >>"$LOGFILE" 2>&1
+VALIDATE $? "System packages update"
 
 
 # ------------------------------------------------------------
