@@ -1,16 +1,17 @@
+```bash
 #!/bin/bash
 
 # ============================================================
-# Maven Installation Script (RHEL 10)
-# ============================================================
+# Maven Installation Script for RHEL 10
 # Purpose:
-#   Install Java JDK and the latest stable Apache Maven 3.x
-#   Safe to re-run: steps already done are SKIPPED (yellow).
-#
-# Optional overrides (environment variables):
-#   RUN_SYSTEM_UPDATE=true ./maven-install.sh
+#   1. Install Java 21 JDK
+#   2. Detect and install the latest stable Maven 3.x
+#   3. Configure Maven environment variables permanently
+#   4. Make mvn available immediately through /usr/local/bin
+#   5. Verify Java and Maven installation
 # ============================================================
 
+set -o pipefail
 
 # ------------------------------------------------------------
 # Configuration
@@ -21,61 +22,51 @@ JAVA_VERSION="21"
 MAVEN_BASE_DIR="/opt"
 MAVEN_SYMLINK="${MAVEN_BASE_DIR}/maven"
 
-# Apache directory listing (only holds currently supported releases)
 MAVEN_INDEX_URL="https://dlcdn.apache.org/maven/maven-3/"
 
-RUN_SYSTEM_UPDATE="${RUN_SYSTEM_UPDATE:-false}"   # true = run dnf update first
-
 PROFILE_FILE="/etc/profile.d/maven.sh"
+GLOBAL_BIN="/usr/local/bin"
+
+RUN_SYSTEM_UPDATE="${RUN_SYSTEM_UPDATE:-false}"
 
 LOGFILE="/tmp/maven-install-$(date +%F-%H-%M-%S).log"
-
 
 # ------------------------------------------------------------
 # Colors
 # ------------------------------------------------------------
 
-R="\e[31m"
-G="\e[32m"
-Y="\e[33m"
-N="\e[0m"
-
+R='\033[31m'
+G='\033[32m'
+Y='\033[33m'
+N='\033[0m'
 
 # ------------------------------------------------------------
 # Functions
 # ------------------------------------------------------------
 
 VALIDATE() {
-
-    if [ "$1" -ne 0 ]
-    then
-        echo -e "$2...$R FAILURE $N"
+    if [ "$1" -ne 0 ]; then
+        echo -e "$2...${R} FAILURE ${N}"
         echo "Check log file: $LOGFILE"
         exit 1
     else
-        echo -e "$2...$G SUCCESS $N"
+        echo -e "$2...${G} SUCCESS ${N}"
     fi
 }
 
 SKIP() {
-    echo -e "$1...$Y SKIPPING (already done) $N"
+    echo -e "$1...${Y} SKIPPING (already done) ${N}"
 }
-
 
 # ------------------------------------------------------------
 # Root User Check
 # ------------------------------------------------------------
 
-USERID=$(id -u)
-
-if [ "$USERID" -ne 0 ]
-then
-    echo -e "$R Please run this script with root access $N"
+if [ "$(id -u)" -ne 0 ]; then
+    echo -e "${R}Please run this script with root access.${N}"
+    echo "Example: sudo sh maven.sh"
     exit 1
-else
-    echo -e "$G You are running as root $N"
 fi
-
 
 # ------------------------------------------------------------
 # Start
@@ -86,98 +77,91 @@ echo "============================================================"
 echo " Java + Latest Maven 3.x Installation"
 echo "============================================================"
 echo
-echo "Java Version  : $JAVA_VERSION"
-echo "Maven Home    : $MAVEN_SYMLINK"
-echo "Log File      : $LOGFILE"
+echo "Java Version : $JAVA_VERSION"
+echo "Maven Home   : $MAVEN_SYMLINK"
+echo "Log File     : $LOGFILE"
 echo
 
+touch "$LOGFILE" || exit 1
 
 # ------------------------------------------------------------
-# System Update (optional)
+# System Update (Optional)
 # ------------------------------------------------------------
 
-if [ "$RUN_SYSTEM_UPDATE" = "true" ]
-then
+if [ "$RUN_SYSTEM_UPDATE" = "true" ]; then
     dnf update -y --allowerasing >> "$LOGFILE" 2>&1
     VALIDATE $? "System packages update"
 else
     SKIP "System packages update (RUN_SYSTEM_UPDATE=false)"
 fi
 
-
 # ------------------------------------------------------------
-# Required Packages (install only the missing ones)
+# Required Packages
 # ------------------------------------------------------------
 
 MISSING_PKGS=""
 
 for PKG in wget curl tar gzip
 do
-    rpm -q "$PKG" &>/dev/null || MISSING_PKGS="$MISSING_PKGS $PKG"
+    if ! rpm -q "$PKG" &>/dev/null; then
+        MISSING_PKGS="$MISSING_PKGS $PKG"
+    fi
 done
 
-if [ -z "$MISSING_PKGS" ]
-then
+if [ -z "$MISSING_PKGS" ]; then
     SKIP "Installing required packages"
 else
-    dnf install -y $MISSING_PKGS &>> "$LOGFILE"
-    VALIDATE $? "Installing required packages:${MISSING_PKGS}"
+    dnf install -y $MISSING_PKGS >> "$LOGFILE" 2>&1
+    VALIDATE $? "Installing required packages"
 fi
 
-
 # ------------------------------------------------------------
-# Java JDK
+# Install Java 21 JDK
 # ------------------------------------------------------------
 
-if rpm -q "java-${JAVA_VERSION}-openjdk-devel" &>/dev/null
-then
+if rpm -q "java-${JAVA_VERSION}-openjdk-devel" &>/dev/null; then
     SKIP "Installing Java ${JAVA_VERSION} JDK"
 else
-    dnf install -y "java-${JAVA_VERSION}-openjdk-devel" &>> "$LOGFILE"
+    dnf install -y "java-${JAVA_VERSION}-openjdk-devel" \
+        >> "$LOGFILE" 2>&1
     VALIDATE $? "Installing Java ${JAVA_VERSION} JDK"
 fi
 
-java -version &>> "$LOGFILE"
+java -version >> "$LOGFILE" 2>&1
 VALIDATE $? "Checking Java installation"
 
-javac -version &>> "$LOGFILE"
+javac -version >> "$LOGFILE" 2>&1
 VALIDATE $? "Checking Java compiler"
 
-JAVA_HOME_PATH=$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")
-
+JAVA_HOME_PATH=$(
+    dirname "$(dirname "$(readlink -f "$(command -v javac)")")"
+)
 
 # ------------------------------------------------------------
-# Detect Latest Stable Maven 3.x Version
+# Detect Latest Stable Maven 3.x
 # ------------------------------------------------------------
 
 echo
 echo "Detecting latest stable Maven 3.x version..."
 
-MAVEN_VERSION=$(curl -fsSL "$MAVEN_INDEX_URL" \
-    | grep -oP 'href="\K3\.[0-9]+\.[0-9]+(?=/")' \
-    | sort -V \
-    | tail -1)
+MAVEN_VERSION=$(
+    curl -fsSL "$MAVEN_INDEX_URL" 2>> "$LOGFILE" |
+        grep -oP 'href="\K3\.[0-9]+\.[0-9]+(?=/")' |
+        sort -Vu |
+        tail -n 1
+)
 
-if [ -z "$MAVEN_VERSION" ]
-then
-    echo -e "$R Unable to determine latest Maven 3.x version $N"
-    echo "Checked URL: $MAVEN_INDEX_URL"
+if [ -z "$MAVEN_VERSION" ]; then
+    echo -e "${R}Unable to detect Maven version.${N}"
+    echo "Check URL: $MAVEN_INDEX_URL"
+    echo "Check log: $LOGFILE"
     exit 1
 fi
 
-echo -e "Latest Maven 3.x Version : $G $MAVEN_VERSION $N"
-
-# Show what is currently installed (if anything)
-if [ -L "$MAVEN_SYMLINK" ]
-then
-    CURRENT_HOME=$(readlink -f "$MAVEN_SYMLINK")
-    echo -e "Currently installed      : $Y ${CURRENT_HOME##*/apache-maven-} $N"
-fi
-echo
-
+echo -e "Latest Maven 3.x Version: ${G}${MAVEN_VERSION}${N}"
 
 # ------------------------------------------------------------
-# Maven Variables
+# Maven Paths
 # ------------------------------------------------------------
 
 MAVEN_HOME="${MAVEN_BASE_DIR}/apache-maven-${MAVEN_VERSION}"
@@ -188,81 +172,100 @@ echo "Maven URL  : $MAVEN_URL"
 echo "Maven Home : $MAVEN_HOME"
 echo
 
-cd "$MAVEN_BASE_DIR" &>> "$LOGFILE"
-VALIDATE $? "Changing directory to ${MAVEN_BASE_DIR}"
-
+cd "$MAVEN_BASE_DIR" >> "$LOGFILE" 2>&1
+VALIDATE $? "Changing directory to $MAVEN_BASE_DIR"
 
 # ------------------------------------------------------------
-# Download + Verify + Extract (skip if this version exists)
+# Download, Verify and Extract Maven
 # ------------------------------------------------------------
 
-if [ -d "$MAVEN_HOME" ]
-then
-
-    SKIP "Maven ${MAVEN_VERSION} download/extract (found at ${MAVEN_HOME})"
-
+if [ -d "$MAVEN_HOME" ]; then
+    SKIP "Maven download/extraction"
 else
+    wget -q "$MAVEN_URL" -O "$MAVEN_ARCHIVE" \
+        >> "$LOGFILE" 2>&1
+    VALIDATE $? "Downloading Maven"
 
-    wget -q "$MAVEN_URL" -O "$MAVEN_ARCHIVE" &>> "$LOGFILE"
-    VALIDATE $? "Downloading Maven ${MAVEN_VERSION}"
+    EXPECTED_SHA=$(
+        curl -fsSL "${MAVEN_URL}.sha512" 2>> "$LOGFILE" |
+            awk '{print $1}'
+    )
 
-    # Apache publishes only the hash in the .sha512 file
-    EXPECTED_SHA=$(curl -fsSL "${MAVEN_URL}.sha512" | awk '{print $1}')
-    echo "${EXPECTED_SHA}  ${MAVEN_ARCHIVE}" | sha512sum -c - &>> "$LOGFILE"
-    VALIDATE $? "Verifying SHA512 checksum"
+    if [ -z "$EXPECTED_SHA" ]; then
+        echo -e "${R}Unable to retrieve Maven SHA512 checksum.${N}"
+        exit 1
+    fi
 
-    tar -xzf "$MAVEN_ARCHIVE" &>> "$LOGFILE"
-    VALIDATE $? "Extracting Maven ${MAVEN_VERSION}"
+    echo "${EXPECTED_SHA}  ${MAVEN_ARCHIVE}" |
+        sha512sum -c - >> "$LOGFILE" 2>&1
+    VALIDATE $? "Verifying Maven SHA512 checksum"
 
-    rm -f "$MAVEN_ARCHIVE" &>> "$LOGFILE"
+    tar -xzf "$MAVEN_ARCHIVE" >> "$LOGFILE" 2>&1
+    VALIDATE $? "Extracting Maven"
+
+    rm -f "$MAVEN_ARCHIVE"
     VALIDATE $? "Removing Maven archive"
-
 fi
 
-
 # ------------------------------------------------------------
-# Symlink  /opt/maven -> /opt/apache-maven-<version>
+# Create/Update Maven Symbolic Link
+# /opt/maven -> /opt/apache-maven-<version>
 # ------------------------------------------------------------
 
-if [ "$(readlink -f "$MAVEN_SYMLINK" 2>/dev/null)" = "$MAVEN_HOME" ]
-then
-    SKIP "Creating Maven symbolic link (already points to ${MAVEN_HOME})"
+if [ "$(readlink -f "$MAVEN_SYMLINK" 2>/dev/null)" = "$MAVEN_HOME" ]; then
+    SKIP "Maven symbolic link"
 else
-    ln -sfn "$MAVEN_HOME" "$MAVEN_SYMLINK" &>> "$LOGFILE"
+    ln -sfn "$MAVEN_HOME" "$MAVEN_SYMLINK" \
+        >> "$LOGFILE" 2>&1
     VALIDATE $? "Creating Maven symbolic link"
 fi
 
-
 # ------------------------------------------------------------
-# Environment Variables
+# Configure Permanent Environment Variables
 # ------------------------------------------------------------
 
-if [ -f "$PROFILE_FILE" ] && grep -q "MAVEN_HOME=\"$MAVEN_SYMLINK\"" "$PROFILE_FILE"
-then
-    SKIP "Configuring Maven environment variables"
-else
-    cat > "$PROFILE_FILE" <<EOF
-
-# Apache Maven
+cat > "$PROFILE_FILE" <<EOF
+# Apache Maven and Java
+export JAVA_HOME="$JAVA_HOME_PATH"
 export M2_HOME="$MAVEN_SYMLINK"
 export MAVEN_HOME="$MAVEN_SYMLINK"
-export PATH="\$MAVEN_HOME/bin:\$PATH"
-
+export PATH="\$MAVEN_HOME/bin:\$JAVA_HOME/bin:\$PATH"
 EOF
-    VALIDATE $? "Configuring Maven environment variables"
-fi
 
-source "$PROFILE_FILE" &>> "$LOGFILE"
+VALIDATE $? "Configuring Maven environment variables"
+
+chmod 644 "$PROFILE_FILE"
+VALIDATE $? "Setting profile file permissions"
+
+# ------------------------------------------------------------
+# FIX: Make mvn Available Immediately for All Users
+# ------------------------------------------------------------
+# A child script cannot change its parent shell's PATH.
+# A symlink in /usr/local/bin makes mvn available without
+# requiring the user to run source or log in again.
+
+mkdir -p "$GLOBAL_BIN"
+VALIDATE $? "Creating global binary directory"
+
+ln -sfn "$MAVEN_SYMLINK/bin/mvn" "$GLOBAL_BIN/mvn"
+VALIDATE $? "Creating global Maven executable link"
+
+chmod +x "$MAVEN_SYMLINK/bin/mvn"
+VALIDATE $? "Setting Maven executable permissions"
+
+# ------------------------------------------------------------
+# Load Environment in This Script
+# ------------------------------------------------------------
+
+source "$PROFILE_FILE"
 VALIDATE $? "Loading Maven environment variables"
 
-
 # ------------------------------------------------------------
-# Verify Maven
+# Verify Maven Installation
 # ------------------------------------------------------------
 
-mvn -version &>> "$LOGFILE"
+"$GLOBAL_BIN/mvn" --version >> "$LOGFILE" 2>&1
 VALIDATE $? "Checking Maven installation"
-
 
 # ------------------------------------------------------------
 # Completed
@@ -270,7 +273,7 @@ VALIDATE $? "Checking Maven installation"
 
 echo
 echo "============================================================"
-echo -e "$G Maven Installation Completed Successfully $N"
+echo -e "${G} Maven Installation Completed Successfully ${N}"
 echo "============================================================"
 echo
 
@@ -279,11 +282,14 @@ java -version
 
 echo
 echo "Maven Version:"
-mvn -version
+mvn --version
 
 echo
-echo "Maven Home : $MAVEN_SYMLINK  ->  $MAVEN_HOME"
+echo "Maven Home : $MAVEN_SYMLINK -> $MAVEN_HOME"
 echo "Java Home  : $JAVA_HOME_PATH"
+echo "Maven Link : $GLOBAL_BIN/mvn"
 echo "Log File   : $LOGFILE"
 echo
-echo "Run 'source $PROFILE_FILE' (or log in again) to use mvn in your current shell."
+echo "You can run 'mvn --version' immediately."
+echo "Environment variables will also load in new login shells."
+```
