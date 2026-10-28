@@ -2,13 +2,8 @@
 #!/bin/bash
 
 # ============================================================
-# Maven Installation Script for RHEL 10
-# Purpose:
-#   1. Install Java 21 JDK
-#   2. Detect and install the latest stable Maven 3.x
-#   3. Configure Maven environment variables permanently
-#   4. Make mvn available immediately through /usr/local/bin
-#   5. Verify Java and Maven installation
+# Java 21 + Latest Stable Apache Maven 3.x
+# Operating System: RHEL 10
 # ============================================================
 
 set -o pipefail
@@ -20,57 +15,49 @@ set -o pipefail
 JAVA_VERSION="21"
 
 MAVEN_BASE_DIR="/opt"
-MAVEN_SYMLINK="${MAVEN_BASE_DIR}/maven"
-
-MAVEN_INDEX_URL="https://dlcdn.apache.org/maven/maven-3/"
-
+MAVEN_SYMLINK="/opt/maven"
 PROFILE_FILE="/etc/profile.d/maven.sh"
 GLOBAL_BIN="/usr/local/bin"
-
+MAVEN_INDEX_URL="https://dlcdn.apache.org/maven/maven-3/"
 RUN_SYSTEM_UPDATE="${RUN_SYSTEM_UPDATE:-false}"
 
 LOGFILE="/tmp/maven-install-$(date +%F-%H-%M-%S).log"
-
-# ------------------------------------------------------------
-# Colors
-# ------------------------------------------------------------
-
-R='\033[31m'
-G='\033[32m'
-Y='\033[33m'
-N='\033[0m'
 
 # ------------------------------------------------------------
 # Functions
 # ------------------------------------------------------------
 
 VALIDATE() {
-    if [ "$1" -ne 0 ]; then
-        echo -e "$2...${R} FAILURE ${N}"
+    local STATUS="$1"
+    local MESSAGE="$2"
+
+    if [ "$STATUS" -eq 0 ]; then
+        echo "$MESSAGE... SUCCESS"
+    else
+        echo "$MESSAGE... FAILURE"
         echo "Check log file: $LOGFILE"
         exit 1
-    else
-        echo -e "$2...${G} SUCCESS ${N}"
     fi
 }
 
 SKIP() {
-    echo -e "$1...${Y} SKIPPING (already done) ${N}"
+    echo "$1... SKIPPING (already done)"
 }
 
 # ------------------------------------------------------------
-# Root User Check
+# Root Check
 # ------------------------------------------------------------
 
 if [ "$(id -u)" -ne 0 ]; then
-    echo -e "${R}Please run this script with root access.${N}"
-    echo "Example: sudo sh maven.sh"
+    echo "ERROR: Run this script with root access."
+    echo "Command: sudo bash maven.sh"
     exit 1
 fi
 
-# ------------------------------------------------------------
-# Start
-# ------------------------------------------------------------
+touch "$LOGFILE" || {
+    echo "ERROR: Cannot create log file."
+    exit 1
+}
 
 echo
 echo "============================================================"
@@ -82,17 +69,15 @@ echo "Maven Home   : $MAVEN_SYMLINK"
 echo "Log File     : $LOGFILE"
 echo
 
-touch "$LOGFILE" || exit 1
-
 # ------------------------------------------------------------
-# System Update (Optional)
+# Optional System Update
 # ------------------------------------------------------------
 
 if [ "$RUN_SYSTEM_UPDATE" = "true" ]; then
     dnf update -y --allowerasing >> "$LOGFILE" 2>&1
-    VALIDATE $? "System packages update"
+    VALIDATE $? "System package update"
 else
-    SKIP "System packages update (RUN_SYSTEM_UPDATE=false)"
+    SKIP "System package update"
 fi
 
 # ------------------------------------------------------------
@@ -103,39 +88,52 @@ MISSING_PKGS=""
 
 for PKG in wget curl tar gzip
 do
-    if ! rpm -q "$PKG" &>/dev/null; then
+    if ! rpm -q "$PKG" >/dev/null 2>&1; then
         MISSING_PKGS="$MISSING_PKGS $PKG"
     fi
 done
 
-if [ -z "$MISSING_PKGS" ]; then
-    SKIP "Installing required packages"
-else
+if [ -n "$MISSING_PKGS" ]; then
     dnf install -y $MISSING_PKGS >> "$LOGFILE" 2>&1
     VALIDATE $? "Installing required packages"
+else
+    SKIP "Required packages"
 fi
 
 # ------------------------------------------------------------
 # Install Java 21 JDK
 # ------------------------------------------------------------
 
-if rpm -q "java-${JAVA_VERSION}-openjdk-devel" &>/dev/null; then
-    SKIP "Installing Java ${JAVA_VERSION} JDK"
+if rpm -q "java-${JAVA_VERSION}-openjdk-devel" >/dev/null 2>&1; then
+    SKIP "Java ${JAVA_VERSION} JDK"
 else
     dnf install -y "java-${JAVA_VERSION}-openjdk-devel" \
         >> "$LOGFILE" 2>&1
     VALIDATE $? "Installing Java ${JAVA_VERSION} JDK"
 fi
 
-java -version >> "$LOGFILE" 2>&1
+JAVAC_PATH=$(command -v javac)
+
+if [ -z "$JAVAC_PATH" ]; then
+    echo "ERROR: javac was not found."
+    exit 1
+fi
+
+JAVA_HOME_PATH=$(dirname "$(dirname "$(readlink -f "$JAVAC_PATH")")")
+
+if [ ! -x "$JAVA_HOME_PATH/bin/java" ]; then
+    echo "ERROR: Java executable not found under $JAVA_HOME_PATH"
+    exit 1
+fi
+
+export JAVA_HOME="$JAVA_HOME_PATH"
+export PATH="$JAVA_HOME/bin:$PATH"
+
+"$JAVA_HOME/bin/java" -version >> "$LOGFILE" 2>&1
 VALIDATE $? "Checking Java installation"
 
-javac -version >> "$LOGFILE" 2>&1
+"$JAVA_HOME/bin/javac" -version >> "$LOGFILE" 2>&1
 VALIDATE $? "Checking Java compiler"
-
-JAVA_HOME_PATH=$(
-    dirname "$(dirname "$(readlink -f "$(command -v javac)")")"
-)
 
 # ------------------------------------------------------------
 # Detect Latest Stable Maven 3.x
@@ -152,13 +150,13 @@ MAVEN_VERSION=$(
 )
 
 if [ -z "$MAVEN_VERSION" ]; then
-    echo -e "${R}Unable to detect Maven version.${N}"
-    echo "Check URL: $MAVEN_INDEX_URL"
+    echo "ERROR: Could not detect the latest Maven 3.x version."
+    echo "URL: $MAVEN_INDEX_URL"
     echo "Check log: $LOGFILE"
     exit 1
 fi
 
-echo -e "Latest Maven 3.x Version: ${G}${MAVEN_VERSION}${N}"
+echo "Latest Maven 3.x Version: $MAVEN_VERSION"
 
 # ------------------------------------------------------------
 # Maven Paths
@@ -173,14 +171,14 @@ echo "Maven Home : $MAVEN_HOME"
 echo
 
 cd "$MAVEN_BASE_DIR" >> "$LOGFILE" 2>&1
-VALIDATE $? "Changing directory to $MAVEN_BASE_DIR"
+VALIDATE $? "Changing to $MAVEN_BASE_DIR"
 
 # ------------------------------------------------------------
 # Download, Verify and Extract Maven
 # ------------------------------------------------------------
 
 if [ -d "$MAVEN_HOME" ]; then
-    SKIP "Maven download/extraction"
+    SKIP "Maven $MAVEN_VERSION download and extraction"
 else
     wget -q "$MAVEN_URL" -O "$MAVEN_ARCHIVE" \
         >> "$LOGFILE" 2>&1
@@ -192,7 +190,7 @@ else
     )
 
     if [ -z "$EXPECTED_SHA" ]; then
-        echo -e "${R}Unable to retrieve Maven SHA512 checksum.${N}"
+        echo "ERROR: Could not retrieve the Maven SHA512 checksum."
         exit 1
     fi
 
@@ -208,9 +206,25 @@ else
 fi
 
 # ------------------------------------------------------------
-# Create/Update Maven Symbolic Link
+# Validate Maven Executable
+# ------------------------------------------------------------
+
+if [ ! -x "$MAVEN_HOME/bin/mvn" ]; then
+    echo "ERROR: Maven executable not found:"
+    echo "$MAVEN_HOME/bin/mvn"
+    exit 1
+fi
+
+# ------------------------------------------------------------
+# Create Stable Maven Symlink
 # /opt/maven -> /opt/apache-maven-<version>
 # ------------------------------------------------------------
+
+if [ -e "$MAVEN_SYMLINK" ] && [ ! -L "$MAVEN_SYMLINK" ]; then
+    echo "ERROR: $MAVEN_SYMLINK exists and is not a symbolic link."
+    echo "Inspect it before replacing anything."
+    exit 1
+fi
 
 if [ "$(readlink -f "$MAVEN_SYMLINK" 2>/dev/null)" = "$MAVEN_HOME" ]; then
     SKIP "Maven symbolic link"
@@ -232,64 +246,58 @@ export MAVEN_HOME="$MAVEN_SYMLINK"
 export PATH="\$MAVEN_HOME/bin:\$JAVA_HOME/bin:\$PATH"
 EOF
 
-VALIDATE $? "Configuring Maven environment variables"
+VALIDATE $? "Configuring environment variables"
 
 chmod 644 "$PROFILE_FILE"
-VALIDATE $? "Setting profile file permissions"
+VALIDATE $? "Setting profile permissions"
 
 # ------------------------------------------------------------
-# FIX: Make mvn Available Immediately for All Users
+# Make Maven Available Immediately to All Users
 # ------------------------------------------------------------
-# A child script cannot change its parent shell's PATH.
-# A symlink in /usr/local/bin makes mvn available without
-# requiring the user to run source or log in again.
 
 mkdir -p "$GLOBAL_BIN"
 VALIDATE $? "Creating global binary directory"
 
 ln -sfn "$MAVEN_SYMLINK/bin/mvn" "$GLOBAL_BIN/mvn"
-VALIDATE $? "Creating global Maven executable link"
-
-chmod +x "$MAVEN_SYMLINK/bin/mvn"
-VALIDATE $? "Setting Maven executable permissions"
+VALIDATE $? "Creating global Maven command"
 
 # ------------------------------------------------------------
-# Load Environment in This Script
+# Load Environment in the Installation Process
 # ------------------------------------------------------------
 
 source "$PROFILE_FILE"
-VALIDATE $? "Loading Maven environment variables"
+VALIDATE $? "Loading environment variables"
 
 # ------------------------------------------------------------
 # Verify Maven Installation
 # ------------------------------------------------------------
 
-"$GLOBAL_BIN/mvn" --version >> "$LOGFILE" 2>&1
+"$MAVEN_SYMLINK/bin/mvn" --version >> "$LOGFILE" 2>&1
 VALIDATE $? "Checking Maven installation"
 
 # ------------------------------------------------------------
-# Completed
+# Installation Summary
 # ------------------------------------------------------------
 
 echo
 echo "============================================================"
-echo -e "${G} Maven Installation Completed Successfully ${N}"
+echo " Maven Installation Completed Successfully"
 echo "============================================================"
 echo
 
 echo "Java Version:"
-java -version
+"$JAVA_HOME/bin/java" -version
 
 echo
 echo "Maven Version:"
-mvn --version
+"$MAVEN_SYMLINK/bin/mvn" --version
 
 echo
-echo "Maven Home : $MAVEN_SYMLINK -> $MAVEN_HOME"
+echo "Maven Home : $MAVEN_SYMLINK"
 echo "Java Home  : $JAVA_HOME_PATH"
 echo "Maven Link : $GLOBAL_BIN/mvn"
 echo "Log File   : $LOGFILE"
 echo
-echo "You can run 'mvn --version' immediately."
-echo "Environment variables will also load in new login shells."
+echo "Run mvn --version from your current shell."
+echo "New login shells will load /etc/profile.d/maven.sh."
 ```
