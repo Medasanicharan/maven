@@ -1,4 +1,3 @@
-```bash
 #!/bin/bash
 
 # ============================================================
@@ -300,4 +299,3 @@ echo "Log File   : $LOGFILE"
 echo
 echo "Run mvn --version from your current shell."
 echo "New login shells will load /etc/profile.d/maven.sh."
-```
